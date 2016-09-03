@@ -7,4 +7,8 @@ gcc -o srvtest \
     src/external/clib/buf.c \
     src/external/clib/system.c \
     src/external/clib/mem.c \
-    src/network/layer1.c
+    src/external/clib/net.c \
+    src/external/clib/net_udp.c \
+    src/network/layer1.c \
+    -Wall \
+    -Wno-unused-function
