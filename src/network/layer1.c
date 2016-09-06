@@ -112,20 +112,48 @@ net_l1_server_init(net_l1_server *srv,
   srv->cb_on_client_packet = cb_on_client_packet;
 
   srv->user = user;
-}
 
-void net_l1_server_destroy(net_l1_server *srv, clib_evloop *ev)
-{
-  //TODO:
+  return true;
 }
 
 bool
 net_l1_client_init(net_l1_client *cl,
-                    clib_evloop *ev, net_addr *bind_to,
+                    clib_evloop *ev, net_addr *connect_to,
                     net_l1_cb_on_connect cb_on_connect,
                     net_l1_cb_on_drop cb_on_drop,
                     net_l1_cb_on_packet cb_on_packet,
                     void *user)
 {
+  cl->udp = clib_net_udp_new(ev, NULL, cb_on_data_from_cl, cl);
 
+  if (!cl->udp)
+    return false;
+
+  cl->remote_addr = *connect_to;
+
+  cl->cb_on_connect = cb_on_connect;
+  cl->cb_on_drop = cb_on_drop;
+  cl->cb_on_packet = cb_on_packet;
+
+  cl->user = user;
+
+  cl->last_request = -1;
+  cl->last_pong = -1;
+
+  /* init connect */
+
+  return true;
 }
+
+void net_l1_server_uninit(net_l1_server *srv, clib_evloop *ev)
+{
+  //TODO: notify clients
+
+  clib_net_udp_destroy(srv->udp);
+}
+
+void net_l1_client_uninit(net_l1_client *cl, clib_evloop *ev)
+{
+  clib_net_udp_destroy(cl->udp);
+}
+

@@ -12,4 +12,5 @@ gcc -o srvtest \
     src/external/md5/md5.c \
     src/network/layer1.c \
     -Wall \
-    -Wno-unused-function
+    -Wno-unused-function \
+    -Wno-unused-variable

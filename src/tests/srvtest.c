@@ -50,6 +50,7 @@ evloop_on_init(clib_evloop *evloop)
 
 static void evloop_on_destroy(clib_evloop *evloop)
 {
+  net_l1_server_uninit(&srv, evloop);
 }
 
 int

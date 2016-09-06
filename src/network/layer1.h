@@ -8,6 +8,8 @@ enum
 {
   /* TODO: move */
   L1_DEFAULT_PORT=40040,
+  L1_TIMEOUT=5*1000,
+  L1_PING_INTERVAL=500,
 
   L1_MIN_PACKET_SIZE=6,
   L1_TOKEN_SIZE=4,
@@ -77,6 +79,14 @@ typedef struct net_l1_server_client
   bool active;
   void *cl_user;
   net_addr addr;
+  
+  /* ping timers */
+  int64_t last_ping;
+  int64_t last_pong;
+
+  /* pong token needs to match */
+  uint32_t cur_ping_token;
+
 } net_l1_server_client;
 
 typedef struct net_l1_server_client_ref
@@ -121,9 +131,31 @@ typedef void (*net_l1_cb_on_packet)
 typedef void (*net_l1_cb_on_drop)
   (void *user, struct net_l1_client *client);
 
+
+enum
+{
+  /* client states */
+  L1_CL_STATE_REQUEST_TOKEN=0,
+  L1_CL_STATE_VERIFY_TOKEN
+};
+
 typedef struct net_l1_client
 {
   clib_net_udp *udp;
+
+  int state;
+
+  int64_t connecting_since;
+  /* last token/verification request */
+  int64_t last_request;
+  /* ping timers */
+  int64_t last_ping;
+  int64_t last_pong;
+
+  /* pong token needs to match */
+  uint32_t cur_ping_token;
+
+  net_addr remote_addr;
 
   net_l1_cb_on_connect cb_on_connect;
   net_l1_cb_on_drop cb_on_drop;
@@ -133,10 +165,13 @@ typedef struct net_l1_client
 
 bool
 net_l1_client_init(net_l1_client *cl,
-                    clib_evloop *ev, net_addr *bind_to,
+                    clib_evloop *ev, net_addr *connect_to,
                     net_l1_cb_on_connect cb_on_connect,
                     net_l1_cb_on_drop cb_on_drop,
                     net_l1_cb_on_packet cb_on_packet,
                     void *user);
+
+void net_l1_server_uninit(net_l1_server *srv, clib_evloop *ev);
+void net_l1_client_uninit(net_l1_client *cl, clib_evloop *ev);
 
 #endif
