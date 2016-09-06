@@ -9,6 +9,7 @@ gcc -o srvtest \
     src/external/clib/mem.c \
     src/external/clib/net.c \
     src/external/clib/net_udp.c \
+    src/external/md5/md5.c \
     src/network/layer1.c \
     -Wall \
     -Wno-unused-function

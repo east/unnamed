@@ -10,24 +10,21 @@ static clib_evloop *ev;
 static net_l1_server srv;
 
 static void
-cb_on_client(void *user, void *cl_user,
-              struct net_l1_server *srv,
+cb_on_client(struct net_l1_server *srv,
               struct net_l1_server_client *client)
 {
 
 }
 
 static void
-cb_on_client_drop(void *user, void *cl_user,
-                  struct net_l1_server *srv,
+cb_on_client_drop(struct net_l1_server *srv,
                   struct net_l1_server_client *client)
 {
 
 }
 
 static void
-cb_on_client_packet(void *user, void *cl_user,
-                          struct net_l1_server *srv,
+cb_on_client_packet(struct net_l1_server *srv,
                           struct net_l1_server_client *client,
                           uint8_t *data, int size)
 {
