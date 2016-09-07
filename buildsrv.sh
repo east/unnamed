@@ -11,6 +11,8 @@ gcc -o srvtest \
     src/external/clib/net_udp.c \
     src/external/md5/md5.c \
     src/network/layer1.c \
+    -g \
     -Wall \
     -Wno-unused-function \
     -Wno-unused-variable
+

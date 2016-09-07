@@ -13,7 +13,7 @@ static void
 cb_on_client(struct net_l1_server *srv,
               struct net_l1_server_client *client)
 {
-
+  printf("new client: %p\n", client);
 }
 
 static void
@@ -26,7 +26,7 @@ cb_on_client_drop(struct net_l1_server *srv,
 static void
 cb_on_client_packet(struct net_l1_server *srv,
                           struct net_l1_server_client *client,
-                          uint8_t *data, int size)
+                          const uint8_t *data, int size)
 {
 
 }
