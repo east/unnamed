@@ -130,15 +130,19 @@ cl_send_close(net_l1_client *cl, uint32_t token)
 }
 
 static void
-free_client_slot(net_l1_server *srv, int slot)
+free_client_slot(net_l1_server *srv, net_l1_server_client *cl)
 {
-  net_l1_server_client *cl = srv->client_map[slot].cl;
+  int slot = cl->map_slot;
 
   /* free client slot */
   cl->active = false;
   srv->num_clients--;
   if (srv->num_clients > 0 && srv->num_clients != slot)
+  {
+    /* last client moves to open slot */
     srv->client_map[slot] = srv->client_map[srv->num_clients];
+    srv->client_map[slot].cl->map_slot = slot;
+  }
 }
 
 static void
@@ -158,8 +162,8 @@ srv_handle_timing(net_l1_server *srv)
 
       srv->cb_on_client_drop(srv, cl);
 
-      /* free slot,  be careful here */
-      free_client_slot(srv, i);
+      /* free slot, be careful here */
+      free_client_slot(srv, cl);
       i--;
     } else if ((cl->last_ping == -1 && now - cl->last_valid_packet > L1_TIMEOUT*1000/2) ||
                 (cl->last_ping != -1 && now - cl->last_ping > L1_PING_RETRY_INTERVAL*1000)) {
@@ -283,8 +287,9 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       cl->last_valid_packet = time_get();
 
       /* set up map entry */
+      cl->map_slot = srv->num_clients++;
       net_l1_server_client_ref *ref =
-              &srv->client_map[srv->num_clients++];
+              &srv->client_map[cl->map_slot];
 
       ref->addr = *from;
       ref->cl = cl;
@@ -332,7 +337,7 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
         } else if (ctrl_type == L1_CLOSE) {
           /* client closed session */
           srv->cb_on_client_drop(srv, cl);
-          free_client_slot(srv, i);
+          free_client_slot(srv, cl);
         } else if (ctrl_type == L1_MESSAGE) {
           /* valid client packet */
           srv->cb_on_client_packet(srv, cl, &data[6], size-6);
@@ -517,15 +522,58 @@ net_l1_client_init(net_l1_client *cl,
   return true;
 }
 
+void net_l1_server_send(net_l1_server *srv, net_l1_server_client *cl,
+                        const uint8_t *data, size_t size)
+{
+  l1_header_raw *p = (l1_header_raw*)(data - L1_HEADER_SIZE);
+
+  /* prepare packet */
+  p->token = cl->session_token;
+  p->ctrl_type = (L1_SRV_MAGIC<<3)|L1_MESSAGE;
+
+  /* send */
+  clib_net_udp_send(srv->udp, (uint8_t*)p,
+                        size+L1_HEADER_SIZE, &cl->addr);
+}
+
+void net_l1_server_client_close(net_l1_server *srv,
+                                net_l1_server_client *cl)
+{
+  srv_send_close(srv, &cl->addr, cl->session_token);
+  srv->cb_on_client_drop(srv, cl);
+  free_client_slot(srv, cl);
+}
+
+void net_l1_client_send(net_l1_client *cl,
+                        const uint8_t *data, size_t size)
+{
+  l1_header_raw *p = (l1_header_raw*)(data - L1_HEADER_SIZE);
+
+  /* prepare packet */
+  p->token = cl->session_token;
+  p->ctrl_type = (L1_CL_MAGIC<<3)|L1_MESSAGE;
+
+  /* send */
+  clib_net_udp_send(cl->udp, (uint8_t*)p,
+                        size+L1_HEADER_SIZE, &cl->remote_addr);
+}
+
 void net_l1_server_uninit(net_l1_server *srv, clib_evloop *ev)
 {
-  //TODO: notify clients
+  /* notify clients */
+  int i;
+  for (i = 0; i < srv->num_clients; i++) {
+    net_l1_server_client *cl = srv->client_map[i].cl;
+    srv_send_close(srv, &cl->addr, cl->session_token);
+  }
 
   clib_net_udp_destroy(srv->udp);
 }
 
 void net_l1_client_uninit(net_l1_client *cl, clib_evloop *ev)
 {
+  if (cl->state == L1_CL_STATE_ONLINE)
+    cl_send_close(cl, cl->session_token);
   clib_net_udp_destroy(cl->udp);
 }
 

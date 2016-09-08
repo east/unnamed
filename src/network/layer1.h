@@ -11,7 +11,8 @@ enum
   L1_TIMEOUT=10*1000,
   L1_PING_RETRY_INTERVAL=500,
 
-  L1_MIN_PACKET_SIZE=6,
+  L1_HEADER_SIZE=6,
+  L1_MIN_PACKET_SIZE=L1_HEADER_SIZE,
   L1_TOKEN_SIZE=4,
   L1_SECRET_SEED_SIZE=8,
 
@@ -88,6 +89,7 @@ typedef void (*net_l1_cb_on_client_packet)
 typedef struct net_l1_server_client
 {
   bool active;
+  int map_slot;
   void *cl_user;
   net_addr addr;
 
@@ -135,8 +137,13 @@ net_l1_server_init(net_l1_server *srv,
                     net_l1_cb_on_client_packet cb_on_client_packet,
                     void *user);
 
-bool
-net_l1_server_full(net_l1_server *srv);
+bool net_l1_server_full(net_l1_server *srv);
+void net_l1_server_send(net_l1_server *srv, net_l1_server_client *cl,
+                        const uint8_t *data, size_t size);
+void net_l1_server_client_close(net_l1_server *srv,
+                                net_l1_server_client *cl);
+
+void net_l1_server_uninit(net_l1_server *srv, clib_evloop *ev);
 
 /* client */
 struct net_l1_client;
@@ -197,7 +204,9 @@ net_l1_client_init(net_l1_client *cl,
                     net_l1_cb_on_packet cb_on_packet,
                     void *user);
 
-void net_l1_server_uninit(net_l1_server *srv, clib_evloop *ev);
+void net_l1_client_send(net_l1_client *cl,
+                        const uint8_t *data, size_t size);
+
 void net_l1_client_uninit(net_l1_client *cl, clib_evloop *ev);
 
 #endif
