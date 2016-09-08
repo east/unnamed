@@ -8,8 +8,8 @@ enum
 {
   /* TODO: move */
   L1_DEFAULT_PORT=40040,
-  L1_TIMEOUT=5*1000,
-  L1_PING_INTERVAL=500,
+  L1_TIMEOUT=10*1000,
+  L1_PING_RETRY_INTERVAL=500,
 
   L1_MIN_PACKET_SIZE=6,
   L1_TOKEN_SIZE=4,
@@ -67,7 +67,7 @@ typedef struct __attribute__((__packed__))
 /* server */
 enum
 {
-  NET_L1_SRV_MAX_CLIENTS=2048,
+  NET_L1_SRV_MAX_CLIENTS=256,
 };
 
 struct net_l1_server;
@@ -95,7 +95,8 @@ typedef struct net_l1_server_client
  
   /* ping timers */
   int64_t last_ping;
-  int64_t last_pong;
+
+  int64_t last_valid_packet;
 
   /* pong token needs to match */
   uint32_t cur_ping_token;
@@ -111,6 +112,7 @@ typedef struct net_l1_server_client_ref
 typedef struct net_l1_server
 {
   clib_net_udp *udp;
+  struct clib_evloop_timer *timer;
 
   uint8_t secret_seed[L1_SECRET_SEED_SIZE];
 
@@ -161,6 +163,7 @@ enum
 typedef struct net_l1_client
 {
   clib_net_udp *udp;
+  struct clib_evloop_timer *timer;
 
   int state;
 
@@ -172,7 +175,8 @@ typedef struct net_l1_client
   uint32_t request_token;
   /* ping timers */
   int64_t last_ping;
-  int64_t last_pong;
+
+  int64_t last_valid_packet;
 
   /* pong token needs to match */
   uint32_t cur_ping_token;

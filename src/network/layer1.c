@@ -74,6 +74,19 @@ srv_send_pong(net_l1_server *srv, net_l1_server_client *cl,
 }
 
 static void
+srv_send_close(net_l1_server *srv, net_addr *addr, uint32_t token)
+{
+  /* prepare packet */
+  l1_header_raw packet;
+  packet.token = token;
+  packet.ctrl_type = (L1_SRV_MAGIC<<3)|L1_CLOSE;
+
+  /* send */
+  clib_net_udp_send(srv->udp, (uint8_t*)&packet,
+                        6, addr);
+}
+
+static void
 cl_send_ping(net_l1_client *cl)
 {
   /* prepare packet */
@@ -104,6 +117,108 @@ cl_send_pong(net_l1_client *cl, uint32_t tmp_token)
 }
 
 static void
+cl_send_close(net_l1_client *cl, uint32_t token)
+{
+  /* prepare packet */
+  l1_header_raw packet;
+  packet.token = token;
+  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_CLOSE;
+
+  /* send */
+  clib_net_udp_send(cl->udp, (uint8_t*)&packet,
+                        6, &cl->remote_addr);
+}
+
+static void
+free_client_slot(net_l1_server *srv, int slot)
+{
+  net_l1_server_client *cl = srv->client_map[slot].cl;
+
+  /* free client slot */
+  cl->active = false;
+  srv->num_clients--;
+  if (srv->num_clients > 0 && srv->num_clients != slot)
+    srv->client_map[slot] = srv->client_map[srv->num_clients];
+}
+
+static void
+srv_handle_timing(net_l1_server *srv)
+{
+  int64_t now = time_get();
+
+  //TODO: don't do a full iteration if not necessary
+  int i;
+  for (i = 0; i < srv->num_clients; i++) {
+    net_l1_server_client *cl = srv->client_map[i].cl;
+
+    if (now - cl->last_valid_packet > L1_TIMEOUT*1000) {
+      /* session timeout */
+      /* try to notify client */
+      srv_send_close(srv, &cl->addr, cl->session_token);
+
+      srv->cb_on_client_drop(srv, cl);
+
+      /* free slot,  be careful here */
+      free_client_slot(srv, i);
+      i--;
+    } else if ((cl->last_ping == -1 && now - cl->last_valid_packet > L1_TIMEOUT*1000/2) ||
+                (cl->last_ping != -1 && now - cl->last_ping > L1_PING_RETRY_INTERVAL*1000)) {
+
+      /* no response since half of timeout, start/continue pinging */
+      cl->last_ping = now;
+      cl->cur_ping_token = random_uint32();
+
+      srv_send_ping(srv, cl);
+    }
+  }
+}
+
+static void
+cl_handle_timing(net_l1_client *cl)
+{
+  int64_t now = time_get();
+
+  if (cl->state == L1_CL_STATE_REQUEST_TOKEN ||
+        cl->state == L1_CL_STATE_VERIFY_TOKEN) {
+    if (now - cl->connecting_since > L1_TIMEOUT*1000) {
+      /* session initiation timeout */
+      cl->state = L1_CL_STATE_OFFLINE;
+      cl->cb_on_drop(cl);
+    }
+  } else if (cl->state == L1_CL_STATE_ONLINE) {
+    /* ping timing */
+    if (now - cl->last_valid_packet > L1_TIMEOUT*1000) {
+      /* session timeout */
+      /* try to notify server */
+      cl_send_close(cl, cl->session_token);
+      cl->state = L1_CL_STATE_OFFLINE;
+
+      cl->cb_on_drop(cl);
+    } else if ((cl->last_ping == -1 && now - cl->last_valid_packet > L1_TIMEOUT*1000/2) ||
+                (cl->last_ping != -1 && now - cl->last_ping > L1_PING_RETRY_INTERVAL*1000)) {
+
+      /* no response since half of timeout, start/continue pinging */
+      cl->last_ping = now;
+      cl->cur_ping_token = random_uint32();
+
+      cl_send_ping(cl);
+    }
+  }
+}
+
+static void
+cb_cl_on_timer(void *user)
+{
+  cl_handle_timing((net_l1_client*)user);
+}
+
+static void
+cb_srv_on_timer(void *user)
+{
+  srv_handle_timing((net_l1_server*)user);
+}
+
+static void
 cb_on_data_from_cl(void *user, const uint8_t *data,
             int size, net_addr *from)
 {
@@ -125,7 +240,8 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
   if (ctrl_type == L1_CL_REQUEST_TOKEN && size == 10) {
 
     if (net_l1_server_full(srv)) {
-      //TODO: close
+      /* 1st. we cannot accept more clients */
+      srv_send_close(srv, from, token);
     } else {
       //TODO: verify service id
       /* respond with token */
@@ -145,7 +261,8 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
 
     /* matching token received, reserve client slot */
     if (net_l1_server_full(srv)) {
-      //TODO: close
+      /* 2nd. we cannot accept more clients */
+      srv_send_close(srv, from, token);
     } else {
       /* find empty slot */
       int slot;
@@ -163,7 +280,7 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       cl->addr = *from;
 
       cl->last_ping = -1;
-      cl->last_pong = -1;
+      cl->last_valid_packet = time_get();
 
       /* set up map entry */
       net_l1_server_client_ref *ref =
@@ -181,7 +298,6 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       srv_send_ping(srv, cl);
     }
 
-
   } else {
     /* valid session packet required */
     /* search for matching client slot */
@@ -197,29 +313,30 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       /* found */
       net_l1_server_client *cl = srv->client_map[i].cl;
 
-      if (ctrl_type == L1_PINGPONG && size == 11) {
-        if (data[6] == L1_PINGPONG_PING) {
-          /* respond with pong */
-          srv_send_pong(srv, cl, ((uint32_t*)&data[7])[0]);
-        } else {
-          /* verify pong */
-          if (((uint32_t*)&data[7])[0] == cl->cur_ping_token) {
-            //TODO: measure latency
-            cl->last_pong = time_get();
-          }
-        }
-      } else if (ctrl_type == L1_CLOSE) {
-        /* client closed session */
-        srv->cb_on_client_drop(srv, cl);
+      if (cl->session_token == token) {
+        /* token match, valid packet */
+        cl->last_valid_packet = time_get();
 
-        /* free client slot */
-        cl->active = false;
-        srv->num_clients--;
-        if (srv->num_clients > 0 && srv->num_clients != i)
-          srv->client_map[i] = srv->client_map[srv->num_clients];
-      } else if (ctrl_type == L1_MESSAGE) {
-        /* valid client packet */
-        srv->cb_on_client_packet(srv, cl, &data[6], size-6);
+        if (ctrl_type == L1_PINGPONG && size == 11) {
+          if (data[6] == L1_PINGPONG_PING) {
+            /* respond with pong */
+            srv_send_pong(srv, cl, ((uint32_t*)&data[7])[0]);
+          } else if (data[6] == L1_PINGPONG_PONG) {
+            /* verify pong */
+            if (((uint32_t*)&data[7])[0] == cl->cur_ping_token) {
+              //TODO: measure latency
+              /* reset ping */
+              cl->last_ping = -1;
+            }
+          }
+        } else if (ctrl_type == L1_CLOSE) {
+          /* client closed session */
+          srv->cb_on_client_drop(srv, cl);
+          free_client_slot(srv, i);
+        } else if (ctrl_type == L1_MESSAGE) {
+          /* valid client packet */
+          srv->cb_on_client_packet(srv, cl, &data[6], size-6);
+        }
       }
     }
   }
@@ -244,6 +361,12 @@ cb_on_data_from_srv(void *user, const uint8_t *data,
 {
   net_l1_client *cl = user;
 
+  /* don't do anything on offline state */
+  if (cl->state == L1_CL_STATE_OFFLINE)
+    return;
+
+  cl_handle_timing(cl);
+
   if (size < L1_MIN_PACKET_SIZE)
     /* invalid size */
     return;
@@ -258,17 +381,23 @@ cb_on_data_from_srv(void *user, const uint8_t *data,
   uint32_t token = ((uint32_t*)data)[0];
 
   if (cl->state == L1_CL_STATE_REQUEST_TOKEN) {
-    if (ctrl_type == L1_SRV_TOKEN && size == 10 &&
-          token == cl->request_token) {
+    if (token == cl->request_token) {
+      if (ctrl_type == L1_SRV_TOKEN && size == 10) {
 
-      /* received the token, next state */
-      cl->state = L1_CL_STATE_VERIFY_TOKEN;
-      cl->session_token = ((uint32_t*)&data[6])[0];
-      verify_token(cl);
-      cl->last_request = time_get();
+        /* received the token, next state */
+        cl->state = L1_CL_STATE_VERIFY_TOKEN;
+        cl->session_token = ((uint32_t*)&data[6])[0];
+        verify_token(cl);
+        cl->last_request = time_get();
+      } else if (ctrl_type == L1_CLOSE) {
+        /* received close on token request */
+        cl->state = L1_CL_STATE_OFFLINE;
+        cl->cb_on_drop(cl);
+      }
     }
   } else if (cl->session_token == token) {
     /* valid packet from remote server */
+    cl->last_valid_packet = time_get();
 
     if (cl->state != L1_CL_STATE_ONLINE) {
       cl->state = L1_CL_STATE_ONLINE;
@@ -279,12 +408,12 @@ cb_on_data_from_srv(void *user, const uint8_t *data,
       if (data[6] == L1_PINGPONG_PING) {
         /* respond with pong */
         cl_send_pong(cl, ((uint32_t*)&data[7])[0]);
-      } else {
+      } else if (data[6] == L1_PINGPONG_PONG) {
         /* verify pong */
         if (((uint32_t*)&data[7])[0] == cl->cur_ping_token) {
-          printf("got pong\n");
           //TODO: measure latency
-          cl->last_pong = time_get();
+          /* reset ping */
+          cl->last_ping = -1;
         }
       }
     } else if (ctrl_type == L1_CLOSE) {
@@ -307,6 +436,8 @@ net_l1_server_init(net_l1_server *srv,
                     void *user)
 {
   srv->udp = clib_net_udp_new(ev, bind_to, cb_on_data_from_cl, srv);
+  srv->timer = clib_evloop_timer_new(ev, false,
+                100000, NULL, cb_srv_on_timer, srv);
 
   if (!srv->udp)
     return false;
@@ -351,6 +482,7 @@ net_l1_client_init(net_l1_client *cl,
                     net_l1_cb_on_packet cb_on_packet,
                     void *user)
 {
+  int64_t now = time_get();
   net_addr bind_addr;
   ADDR_SET_ANY(&bind_addr, connect_to->type)
 
@@ -367,17 +499,20 @@ net_l1_client_init(net_l1_client *cl,
 
   cl->user = user;
 
-  cl->last_request = -1;
   cl->last_ping = -1;
-  cl->last_pong = -1;
+  cl->last_valid_packet = -1; /* will be set on connect */
 
   /* init connect */
   cl->state = L1_CL_REQUEST_TOKEN;
   cl->request_token = random_uint32();
 
   request_token(cl);
-  cl->connecting_since = time_get();
-  cl->last_request = time_get();
+  cl->connecting_since = now;
+  cl->last_request = now;
+
+  /* init timer */
+  cl->timer = clib_evloop_timer_new(ev, false,
+                100000, NULL, cb_cl_on_timer, cl);
 
   return true;
 }

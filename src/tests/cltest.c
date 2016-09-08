@@ -25,7 +25,7 @@ cb_on_packet(struct net_l1_client *client,
 static void
 cb_on_drop(struct net_l1_client *client)
 {
-
+  printf("we got dropped\n");
 }
 
 static void

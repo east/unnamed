@@ -20,7 +20,7 @@ static void
 cb_on_client_drop(struct net_l1_server *srv,
                   struct net_l1_server_client *client)
 {
-
+  printf("client drop %p\n", client);
 }
 
 static void
