@@ -2,12 +2,27 @@
 #include <stdlib.h>
 
 #include <system.h>
+#include <mem.h>
 #include <evloop.h>
 
 #include <network/layer1.h>
 
 static clib_evloop *ev;
 static net_l1_server srv;
+
+static void
+cb_alloc_slot(struct net_l1_server *srv,
+              struct net_l1_server_client **slot)
+{
+  *slot = clib_mem_alloc(sizeof(struct net_l1_server_client));
+}
+
+static void
+cb_free_slot(struct net_l1_server *srv,
+              struct net_l1_server_client *slot)
+{
+  clib_mem_free(slot);
+}
 
 static void
 cb_on_client(struct net_l1_server *srv,
@@ -41,6 +56,7 @@ evloop_on_init(clib_evloop *evloop)
   IPV4_SET(addr, 127, 0, 0, 1, L1_DEFAULT_PORT);
 
   if (!net_l1_server_init(&srv, ev, &addr, cb_on_client,
+                  cb_alloc_slot, cb_free_slot,
                   cb_on_client_drop, cb_on_client_packet, NULL))
   {
     printf("failed to bind port \n");

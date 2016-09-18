@@ -48,7 +48,7 @@ srv_send_ping(net_l1_server *srv, net_l1_server_client *cl)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->session_token;
-  packet.ctrl_type = (L1_SRV_MAGIC<<3)|L1_PINGPONG;
+  packet.ctrl_type = L1_SRV_MAGIC|L1_PINGPONG;
   packet.pingpong.type = L1_PINGPONG_PING;
   packet.pingpong.token = cl->cur_ping_token;
 
@@ -64,7 +64,7 @@ srv_send_pong(net_l1_server *srv, net_l1_server_client *cl,
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->session_token;
-  packet.ctrl_type = (L1_SRV_MAGIC<<3)|L1_PINGPONG;
+  packet.ctrl_type = L1_SRV_MAGIC|L1_PINGPONG;
   packet.pingpong.type = L1_PINGPONG_PONG;
   packet.pingpong.token = tmp_token;
 
@@ -79,7 +79,7 @@ srv_send_close(net_l1_server *srv, net_addr *addr, uint32_t token)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = token;
-  packet.ctrl_type = (L1_SRV_MAGIC<<3)|L1_CLOSE;
+  packet.ctrl_type = L1_SRV_MAGIC|L1_CLOSE;
 
   /* send */
   clib_net_udp_send(srv->udp, (uint8_t*)&packet,
@@ -92,7 +92,7 @@ cl_send_ping(net_l1_client *cl)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->session_token;
-  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_PINGPONG;
+  packet.ctrl_type = L1_CL_MAGIC|L1_PINGPONG;
   packet.pingpong.type = L1_PINGPONG_PING;
   packet.pingpong.token = cl->cur_ping_token;
 
@@ -107,7 +107,7 @@ cl_send_pong(net_l1_client *cl, uint32_t tmp_token)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->session_token;
-  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_PINGPONG;
+  packet.ctrl_type = L1_CL_MAGIC|L1_PINGPONG;
   packet.pingpong.type = L1_PINGPONG_PONG;
   packet.pingpong.token = tmp_token;
 
@@ -122,7 +122,7 @@ cl_send_close(net_l1_client *cl, uint32_t token)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = token;
-  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_CLOSE;
+  packet.ctrl_type = L1_CL_MAGIC|L1_CLOSE;
 
   /* send */
   clib_net_udp_send(cl->udp, (uint8_t*)&packet,
@@ -135,7 +135,8 @@ free_client_slot(net_l1_server *srv, net_l1_server_client *cl)
   int slot = cl->map_slot;
 
   /* free client slot */
-  cl->active = false;
+  srv->cb_free_slot(srv, cl);
+
   srv->num_clients--;
   if (srv->num_clients > 0 && srv->num_clients != slot)
   {
@@ -234,11 +235,11 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
 
   uint16_t info = ((uint16_t*)&data[L1_TOKEN_SIZE])[0];
 
-  if (info >> 3 != L1_CL_MAGIC)
+  if ((info & L1_MAGIC_MASK) != L1_CL_MAGIC)
     /* magic doesn't match */
     return;
 
-  int ctrl_type = info & 0x7;
+  int ctrl_type = info & L1_CTRL_MASK;
   uint32_t token = ((uint32_t*)data)[0];
 
   if (ctrl_type == L1_CL_REQUEST_TOKEN && size == 10) {
@@ -252,7 +253,7 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       /* prepare packet */
       l1_header_raw packet;
       packet.token = token; /* client token */
-      packet.ctrl_type = (L1_SRV_MAGIC<<3)|L1_SRV_TOKEN;
+      packet.ctrl_type = L1_SRV_MAGIC|L1_SRV_TOKEN;
       /* session token */
       packet.new_token = compute_token(srv->secret_seed, *from);
 
@@ -268,18 +269,14 @@ cb_on_data_from_cl(void *user, const uint8_t *data,
       /* 2nd. we cannot accept more clients */
       srv_send_close(srv, from, token);
     } else {
-      /* find empty slot */
-      int slot;
-      for (slot = 0; slot < NET_L1_SRV_MAX_CLIENTS; slot++) {
-        if (!srv->clients[slot].active)
-          break;
-      }
+      /* ask user for client slot */
+      net_l1_server_client *cl;
+      srv->cb_alloc_slot(srv, &cl);
 
-      net_l1_server_client *cl = &srv->clients[slot];
+      ASSERT(cl != NULL, "failed to alloc client slot")
 
       cl->session_token = token;
 
-      cl->active = true;
       cl->cl_user = NULL;
       cl->addr = *from;
 
@@ -353,7 +350,7 @@ verify_token(net_l1_client *cl)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->session_token;
-  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_CL_VERIFY_TOKEN;
+  packet.ctrl_type = L1_CL_MAGIC|L1_CL_VERIFY_TOKEN;
 
   /* send */
   clib_net_udp_send(cl->udp, (uint8_t*)&packet,
@@ -378,11 +375,11 @@ cb_on_data_from_srv(void *user, const uint8_t *data,
 
   uint16_t info = ((uint16_t*)&data[L1_TOKEN_SIZE])[0];
 
-  if (info >> 3 != L1_SRV_MAGIC)
+  if ((info & L1_MAGIC_MASK) != L1_SRV_MAGIC)
     /* magic doesn't match */
     return;
 
-  int ctrl_type = info & 0x7;
+  int ctrl_type = info & L1_CTRL_MASK;
   uint32_t token = ((uint32_t*)data)[0];
 
   if (cl->state == L1_CL_STATE_REQUEST_TOKEN) {
@@ -436,6 +433,8 @@ bool
 net_l1_server_init(net_l1_server *srv,
                     clib_evloop *ev, net_addr *bind_to,
                     net_l1_cb_on_client cb_on_client,
+                    net_l1_cb_alloc_slot cb_alloc_slot,
+                    net_l1_cb_free_slot cb_free_slot,
                     net_l1_cb_on_client_drop cb_on_client_drop,
                     net_l1_cb_on_client_packet cb_on_client_packet,
                     void *user)
@@ -452,11 +451,10 @@ net_l1_server_init(net_l1_server *srv,
 
   // reset clients
   srv->num_clients = 0;
-  int i;
-  for (i = 0; i < NET_L1_SRV_MAX_CLIENTS; i++)
-    srv->clients[i].active = false;
 
   srv->cb_on_client = cb_on_client;
+  srv->cb_alloc_slot = cb_alloc_slot;
+  srv->cb_free_slot = cb_free_slot;
   srv->cb_on_client_drop = cb_on_client_drop;
   srv->cb_on_client_packet = cb_on_client_packet;
 
@@ -471,7 +469,7 @@ request_token(net_l1_client *cl)
   /* prepare packet */
   l1_header_raw packet;
   packet.token = cl->request_token;
-  packet.ctrl_type = (L1_CL_MAGIC<<3)|L1_CL_REQUEST_TOKEN;
+  packet.ctrl_type = L1_CL_MAGIC|L1_CL_REQUEST_TOKEN;
   packet.service_id = L1_SERVICE_NONE;
 
   /* send */
@@ -529,7 +527,7 @@ void net_l1_server_send(net_l1_server *srv, net_l1_server_client *cl,
 
   /* prepare packet */
   p->token = cl->session_token;
-  p->ctrl_type = (L1_SRV_MAGIC<<3)|L1_MESSAGE;
+  p->ctrl_type = L1_SRV_MAGIC|L1_MESSAGE;
 
   /* send */
   clib_net_udp_send(srv->udp, (uint8_t*)p,
@@ -551,7 +549,7 @@ void net_l1_client_send(net_l1_client *cl,
 
   /* prepare packet */
   p->token = cl->session_token;
-  p->ctrl_type = (L1_CL_MAGIC<<3)|L1_MESSAGE;
+  p->ctrl_type = L1_CL_MAGIC|L1_MESSAGE;
 
   /* send */
   clib_net_udp_send(cl->udp, (uint8_t*)p,

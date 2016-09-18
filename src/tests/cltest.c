@@ -12,7 +12,11 @@ static net_l1_client cl;
 static void
 cb_on_connect(struct net_l1_client *client)
 {
-    printf("connected\n");
+  printf("connected\n");
+    
+  /* send some data */
+  unsigned char data[] = {"this is a test"};
+  net_l1_client_send(client, data, sizeof(data));
 }
 
 static void

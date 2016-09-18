@@ -16,8 +16,8 @@ enum
   L1_TOKEN_SIZE=4,
   L1_SECRET_SEED_SIZE=8,
 
-  L1_CL_MAGIC=0x1e2a,
-  L1_SRV_MAGIC=0x0e7c,
+  L1_CL_MAGIC=0x1e2a << 3,
+  L1_SRV_MAGIC=0x0e7c << 3,
 
   /* service ids */
   L1_SERVICE_NONE=0,
@@ -26,6 +26,9 @@ enum
 /* control types */
 enum
 {
+  L1_CTRL_MASK=0x7,
+  L1_MAGIC_MASK=(~L1_CTRL_MASK)&0xffff,
+
   /* client -> server */
   L1_CL_REQUEST_TOKEN=0x0,
   L1_CL_VERIFY_TOKEN=0x1,
@@ -75,6 +78,12 @@ struct net_l1_server;
 struct net_l1_server_client;
 
 /* callbacks */
+typedef void (*net_l1_cb_alloc_slot)
+  (struct net_l1_server *srv,
+   struct net_l1_server_client **slot);
+typedef void (*net_l1_cb_free_slot)
+  (struct net_l1_server *srv,
+   struct net_l1_server_client *slot);
 typedef void (*net_l1_cb_on_client)
   (struct net_l1_server *srv,
    struct net_l1_server_client *client);
@@ -88,7 +97,6 @@ typedef void (*net_l1_cb_on_client_packet)
 
 typedef struct net_l1_server_client
 {
-  bool active;
   int map_slot;
   void *cl_user;
   net_addr addr;
@@ -120,9 +128,10 @@ typedef struct net_l1_server
 
   int num_clients;
   net_l1_server_client_ref client_map[NET_L1_SRV_MAX_CLIENTS];
-  net_l1_server_client clients[NET_L1_SRV_MAX_CLIENTS];
 
   net_l1_cb_on_client cb_on_client;
+  net_l1_cb_alloc_slot cb_alloc_slot;
+  net_l1_cb_free_slot cb_free_slot;
   net_l1_cb_on_client_drop cb_on_client_drop;
   net_l1_cb_on_client_packet cb_on_client_packet;
 
@@ -133,6 +142,8 @@ bool
 net_l1_server_init(net_l1_server *srv,
                     clib_evloop *ev, net_addr *bind_to,
                     net_l1_cb_on_client cb_on_client,
+                    net_l1_cb_alloc_slot cb_alloc_slot,
+                    net_l1_cb_free_slot cb_free_slot,
                     net_l1_cb_on_client_drop cb_on_client_drop,
                     net_l1_cb_on_client_packet cb_on_client_packet,
                     void *user);
