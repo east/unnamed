@@ -27,22 +27,28 @@ both <->
     
 Detailed
 ========
-requestToken:
-  ``4*8:<tmp client token> 13:<cl magic> 000 4*8:<service id>``
-verifyToken:
-  ``4*8:<session token> 13:<cl magic> 001``
+Header
+------
+  ``4*8:<tmp client token> 16:(13:<srv/cl magic> 3:<ctrl type>)``
 
-Token:
-  ``4*8:<session token> 13:<srv magic> 000 4*8:<new session token>``
+Control Type Sub Headers
+--------------------
+requestToken (0x0):
+  ``4*8:<service id>``
+verifyToken (0x1):
+  no additional headers
 
-close:
-  ``4*8:<session token> 13:<srv/cl magic> 101 [x:<reason>]``
+Token (0x0):
+  ``4*8:<new session token>``
 
-pingpong:
-  ``4*8:<session token> 13:<srv/cl magic> 110 8:<ping/pong> 4*8:<tmp token>``
+close (0x5):
+  ``[x:<reason>]``
 
-msg:
-  ``4*8:<session token> 13:<srv/cl magic> 111 x:<payload>``
+pingpong (0x6):
+  ``8:<ping/pong> 4*8:<tmp token>``
+
+msg (0x7):
+  ``x:<payload>``
 
 Token Handshake
 ---------------

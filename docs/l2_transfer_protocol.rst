@@ -19,7 +19,7 @@ Protocol
 Chunk Header
 ------------
 
-``3:<chunk type> 13:<chunk size>``
+``16:(3:<chunk type> 13:<chunk size>)``
 
 (chunk size -> sub header + data)
 
